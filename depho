@@ -1,0 +1,131 @@
+#!/bin/sh -e
+
+# This file is part of depho.
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the  terms of the GNU General Public License as published by the Free Software
+# Foundation, either version 3 of the License, or (at your option) any later
+# version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License along with
+# this program. If not, see
+#
+#  http://www.gnu.org/licenses/
+#
+#
+# Copyright (C) 2019 mksec <support@mksec.de>
+
+# Get the destination.
+#
+# Accoring to SSH's client documentation, this is always the last argument, if
+# no command is specified. As this tool can't be used with remote commands at
+# the moment, it'll be the last one.
+for last; do true; done
+DESTINATION=$last
+
+if [ -z "$DESTINATION" ]
+then
+    echo "Usage: $0 [ssh arguments] destination" >&2
+    exit 1
+fi
+
+# Check if destination matches host whitelist.
+#
+# If a host whitelist is availabe, check if the destination matches the hosts on
+# the whitelist. If not, this command will not be executed and all arguments
+# passed to ssh.
+[[ -n "$DEPHO_HOSTS" ]] || DEPHO_HOSTS="$HOME/.ssh/depho.hosts"
+
+if [ -f "$DEPHO_HOSTS" ]
+then
+    # Iterate over the list of whitelist entries until one of them matches or no
+    # further entries are available.
+    while read expr
+    do
+        if ( echo $DESTINATION | grep "$expr" > /dev/null )
+        then
+            MATCH=1
+            break
+        fi
+    done < "$DEPHO_HOSTS"
+
+    # If none of the whitelist entries did match the destination host, this
+    # script should not be executed any further and the command will be passed
+    # through to the native SSH client.
+    [[ -z "$MATCH" ]] && exec ssh $@
+fi
+
+
+# Get the source directory.
+#
+# The default source directory resides in the user's ssh directory. An alternate
+# location can be defined by setting the 'DEPHO_SOURCE' environment variable.
+#
+# NOTE: The path MUST NOT include trailing slashes!
+[[ -n "$DEPHO_SOURCE" ]] || DEPHO_SOURCE="$HOME/.ssh/depho"
+
+if [ ! -d "$DEPHO_SOURCE" ]
+then
+    echo "Can't access depho source directory." >&2
+    exit 1
+fi
+
+# Check the target directory.
+#
+# The 'DEPHO_TARGET' variable defines the target directory at the remote host,
+# where the contents of 'DEPHO_SOURCE' will be copied into.
+#
+# NOTE: The target directory needs to be unique to identify the user at the
+#       remote host. Otherwise the contents of different users may conflict.
+#
+# NOTE: The target directory should reside in a temporary location (i.e. /tmp),
+#       as the target directory will NOT be removed after logout, but should be
+#       removed on reboots of the remote hosts.
+#
+# NOTE: The path MUST NOT include trailing slashes!
+if [ -z "$DEPHO_TARGET" ]
+then
+    echo "No target directory defined for depho." >&2
+    exit 1
+fi
+
+# Get the shell to be used.
+#
+# The default shell is /bin/bash. An alternate shell like zsh can be defined by
+# setting the 'DEPHO_SHELL' environment variable.
+[[ -n "$DEPHO_SHELL" ]] || DEPHO_SHELL="/bin/bash"
+
+
+# Copy source directory to remote host.
+#
+# On the remote host 'DEPHO_TARGET' will be created and the contents of the
+# defined source directory copied into it. If the directory is already present,
+# available contents will be updated if necessary.
+rsync --rsync-path="mkdir -p $DEPHO_TARGET && rsync" \
+    -aiu $DEPHO_SOURCE/ $DESTINATION:$DEPHO_TARGET   \
+    | while read foo file; do
+        # Do not print a status message for the './' line, as it may be returned
+        # by rsync, even if no files have been copied.
+        [[ "$file" = "./" ]] && continue
+
+        # If this is the first file to be copied, print a status header. Further
+        # file beeing copied messages will be indented following this message.
+        if [ -z "$STATUS" ]
+        then
+            echo "Updating remote home directory ..."
+            STATUS=1
+        fi
+
+        echo "  copying $file"
+    done
+
+# Execute shell at the remote machine.
+#
+# The contents for the remote home directory have already been copied. Now, the
+# user's HOME directory will be switched to this path and a shell executed in
+# this temporary home directory.
+exec ssh -t $1 "export HOME=$DEPHO_TARGET; cd \$HOME; exec $DEPHO_SHELL"
