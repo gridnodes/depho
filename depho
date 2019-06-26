@@ -105,8 +105,8 @@ fi
 # On the remote host 'DEPHO_TARGET' will be created and the contents of the
 # defined source directory copied into it. If the directory is already present,
 # available contents will be updated if necessary.
-rsync --rsync-path="mkdir -p $DEPHO_TARGET && rsync" \
-    -aiu $DEPHO_SOURCE/ $DESTINATION:$DEPHO_TARGET   \
+rsync --rsync-path="mkdir -p $DEPHO_TARGET && rsync"    \
+    -aiu -- $DEPHO_SOURCE/ "$DESTINATION":$DEPHO_TARGET \
     | while read foo file; do
         # Do not print a status message for the './' line, as it may be returned
         # by rsync, even if no files have been copied.
@@ -128,4 +128,5 @@ rsync --rsync-path="mkdir -p $DEPHO_TARGET && rsync" \
 # The contents for the remote home directory have already been copied. Now, the
 # user's HOME directory will be switched to this path and a shell executed in
 # this temporary home directory.
-exec ssh -t $1 "export HOME=$DEPHO_TARGET; cd \$HOME; exec $DEPHO_SHELL"
+exec ssh -t "$DESTINATION" \
+	"export HOME=$DEPHO_TARGET; cd \$HOME; exec $DEPHO_SHELL"
